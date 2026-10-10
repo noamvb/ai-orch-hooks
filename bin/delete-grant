@@ -1,0 +1,249 @@
+#!/usr/bin/env python3
+"""Record user permission for ONE deletion under the preservation law.
+
+Adapted from rootstock-os reference tools/delete_grant.py (https://github.com/Mazhron/rootstock-os, commit 06c1a08, MIT License, Copyright (c) 2026 Travis Rhoda).
+"""
+import argparse
+import fnmatch
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Optional
+
+
+def state_dir() -> Path:
+    """Private state directory for hooks and grants."""
+    override = os.environ.get("AIORCH_HOOK_STATE_DIR")
+    if override:
+        path = Path(override)
+    else:
+        base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+        path = Path(base) / "ai-orch" / "hooks"
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return path
+
+
+def check_never_delete(path_str: str, cwd: Optional[str] = None) -> Optional[str]:
+    """Return refusal reason if target is on never-delete list, else None."""
+    clean_p = path_str.strip().strip("'\"`")
+    if not clean_p:
+        return "empty target"
+
+    expanded = os.path.expanduser(os.path.expandvars(clean_p))
+    if not os.path.isabs(expanded):
+        base = cwd if cwd else os.getcwd()
+        abs_p = os.path.abspath(os.path.join(base, expanded))
+    else:
+        abs_p = os.path.abspath(expanded)
+
+    try:
+        real_p = os.path.realpath(abs_p)
+    except OSError:
+        real_p = abs_p
+
+    home_abs = os.path.abspath(os.path.expanduser("~"))
+    try:
+        home_real = os.path.realpath(home_abs)
+    except OSError:
+        home_real = home_abs
+
+    # 1. $HOME itself
+    if abs_p == home_abs or real_p == home_real or clean_p in ("~", "$HOME", "${HOME}"):
+        return "$HOME itself"
+
+    # Filesystem root
+    if abs_p == "/" or real_p == "/" or clean_p in ("/", "/*"):
+        return "filesystem root"
+
+    # 2. any .git directory
+    norm_parts = abs_p.split(os.sep)
+    raw_parts = clean_p.replace("\\", "/").split("/")
+    if ".git" in norm_parts or ".git" in raw_parts or os.path.basename(abs_p) == ".git":
+        return "any .git directory"
+
+    # 3. *.result.json under any logs/
+    basename = os.path.basename(abs_p)
+    if fnmatch.fnmatch(basename, "*.result.json"):
+        if "logs" in norm_parts or "logs" in raw_parts:
+            return "*.result.json under logs/"
+
+    # 4. ~/.ai-orch
+    aiorch_abs = os.path.abspath(os.path.expanduser("~/.ai-orch"))
+    try:
+        aiorch_real = os.path.realpath(aiorch_abs)
+    except OSError:
+        aiorch_real = aiorch_abs
+    # The checkout root itself only; files inside it are covered by the
+    # receipt, .git and CLAUDE.md rules and are otherwise grantable.
+    if abs_p == aiorch_abs or real_p == aiorch_real:
+        return "~/.ai-orch"
+
+    # 5. CLAUDE.md
+    if os.path.basename(abs_p) == "CLAUDE.md" or os.path.basename(clean_p) == "CLAUDE.md":
+        return "CLAUDE.md"
+
+    # 6. AGENTS.md
+    if os.path.basename(abs_p) == "AGENTS.md" or os.path.basename(clean_p) == "AGENTS.md":
+        return "AGENTS.md"
+
+    return None
+
+
+# Branch names no grant may cover: the default-branch names every repo here uses.
+NEVER_DELETE_BRANCHES = ("main", "master")
+
+
+def repo_identity(path: str) -> str:
+    """The repository a path belongs to, identical for every worktree of it.
+
+    The parent of git's common dir names the main checkout whether the path is
+    that checkout, a subdirectory, or a linked worktree - branches are shared by
+    all of them. Outside a repository it falls back to the real path. Kept in
+    step with repo_identity() in hooks/preserve_guard.py, which must agree.
+    """
+    abs_p = os.path.realpath(os.path.abspath(os.path.expanduser(path)))
+    try:
+        out = subprocess.run(
+            ["git", "-C", abs_p, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            return os.path.dirname(os.path.realpath(out.stdout.strip()))
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return abs_p
+
+
+def create_branch_grant(branch: str, repo: str) -> None:
+    branch = branch.strip()
+    if not branch or branch.startswith("-"):
+        sys.stderr.write(f"Refused: '{branch}' is not a branch name.\n")
+        sys.exit(1)
+    if branch in NEVER_DELETE_BRANCHES:
+        sys.stderr.write(f"Refused: branch '{branch}' is on the never-delete list (default branch).\n")
+        sys.exit(1)
+    repo_id = repo_identity(repo)
+    grants_dir = state_dir() / "grants"
+    grants_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    now = time.time()
+    grant_data = {
+        "kind": "branch",
+        "repo": repo_id,
+        "branch": branch,
+        "target": f"branch {branch} in {repo_id}",
+        "created_at": now,
+        "expires_at": now + 600,  # 10 minutes
+    }
+    hash_key = hashlib.sha256(f"{repo_id}\0{branch}".encode()).hexdigest()[:16]
+    grant_file = grants_dir / f"grant_branch_{hash_key}_{int(now)}.json"
+    with open(grant_file, "w", encoding="utf-8") as fh:
+        json.dump(grant_data, fh, indent=2)
+    print(f"Grant recorded for deleting branch {branch} in {repo_id} (valid 10 minutes, single use)")
+
+
+def list_grants() -> None:
+    grants_dir = state_dir() / "grants"
+    if not grants_dir.is_dir():
+        print("No live grants")
+        return
+
+    now = time.time()
+    live = []
+    for p in sorted(grants_dir.glob("*.json")):
+        try:
+            with open(p, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            exp = float(data.get("expires_at", 0))
+            if exp > now:
+                rem = int(exp - now)
+                live.append((data.get("target", "unknown"), rem))
+        except Exception:
+            continue
+
+    if not live:
+        print("No live grants")
+    else:
+        for target, rem in live:
+            print(f"{target} (expires in {rem}s)")
+
+
+def create_grant(target_str: str) -> None:
+    nv = check_never_delete(target_str)
+    if nv:
+        sys.stderr.write(f"Refused: '{target_str}' is on the never-delete list ({nv}).\n")
+        sys.exit(1)
+
+    expanded = os.path.expanduser(os.path.expandvars(target_str.strip().strip("'\"`")))
+    abs_target = os.path.abspath(expanded)
+    grants_dir = state_dir() / "grants"
+    grants_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+    now = time.time()
+    grant_data = {
+        "target": abs_target,
+        "created_at": now,
+        "expires_at": now + 600,  # 10 minutes
+    }
+    hash_key = hashlib.sha256(abs_target.encode()).hexdigest()[:16]
+    grant_file = grants_dir / f"grant_{hash_key}_{int(now)}.json"
+
+    with open(grant_file, "w", encoding="utf-8") as fh:
+        json.dump(grant_data, fh, indent=2)
+
+    print(f"Grant recorded for {abs_target} (valid 10 minutes, single use)")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Record user permission for ONE deletion of a path or a branch (single-use grant, valid 10 min)"
+    )
+    parser.add_argument(
+        "target",
+        nargs="?",
+        help="Path to grant deletion for, or 'list' to show live grants",
+    )
+    parser.add_argument(
+        "--target",
+        dest="opt_target",
+        help="Path to grant deletion for",
+    )
+    parser.add_argument(
+        "--branch",
+        help="Grant ONE forced delete (git branch -D) of this branch instead of a path",
+    )
+    parser.add_argument(
+        "--repo",
+        default=os.getcwd(),
+        help="Repository the --branch grant applies to (default: current directory)",
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="List live grants",
+    )
+
+    args = parser.parse_args()
+
+    if args.list or args.target == "list":
+        list_grants()
+        sys.exit(0)
+
+    if args.branch is not None:
+        create_branch_grant(args.branch, args.repo)
+        sys.exit(0)
+
+    target = args.opt_target or args.target
+    if not target:
+        parser.print_help()
+        sys.exit(2)
+
+    create_grant(target)
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()
