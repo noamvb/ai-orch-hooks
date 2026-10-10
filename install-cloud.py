@@ -10,7 +10,8 @@ keeps everything else.
 Only the hooks that make sense on a throwaway VM are wired: the delete and
 force-push guard, the spawn limiter, the elapsed-time line and the context
 advisory. A SessionStart entry pulls this repo, so hook updates arrive even
-when the environment's setup snapshot is days old.
+when the environment's setup snapshot is days old. Skills under skills/ (the
+deck-bridge hand-off) are linked into ~/.claude/skills.
 """
 import json
 import os
@@ -20,6 +21,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 HOME = os.path.expanduser("~")
 LINK = os.path.join(HOME, ".ai-orch")
 SETTINGS = os.path.join(HOME, ".claude", "settings.json")
+SKILLS = os.path.join(HOME, ".claude", "skills")
 MARK = ".ai-orch/hooks/"
 
 
@@ -50,6 +52,20 @@ def link_home():
     os.symlink(HERE, LINK)
 
 
+def link_skills():
+    src_root = os.path.join(HERE, "skills")
+    if not os.path.isdir(src_root):
+        return
+    os.makedirs(SKILLS, exist_ok=True)
+    for name in sorted(os.listdir(src_root)):
+        src, dst = os.path.join(src_root, name), os.path.join(SKILLS, name)
+        if os.path.lexists(dst):
+            if os.path.realpath(dst) != os.path.realpath(src):
+                print(f"install-cloud: {dst} exists; leaving it", file=sys.stderr)
+            continue
+        os.symlink(src, dst)
+
+
 def merge_settings():
     try:
         with open(SETTINGS, encoding="utf-8") as fh:
@@ -73,6 +89,7 @@ def merge_settings():
 
 def main():
     link_home()
+    link_skills()
     merge_settings()
     print(f"install-cloud: hooks wired in {SETTINGS} from {HERE}")
     return 0

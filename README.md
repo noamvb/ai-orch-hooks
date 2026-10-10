@@ -12,6 +12,12 @@ What they do on a cloud VM:
 - `time_budget`: prints elapsed time after each tool call.
 - `stop_tick`: context-remaining advisory.
 
+And one skill, linked into `~/.claude/skills`:
+
+- `deck-bridge`: hand a bounded implementation task to the owner's home
+  machine (codex or agy under its own logins and checks) and fetch the result
+  as a `bridge/<task_id>` branch. See `skills/deck-bridge/SKILL.md`.
+
 ## Use
 
 In a Claude Code cloud environment's setup script:
