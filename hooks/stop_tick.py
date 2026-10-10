@@ -20,6 +20,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _hooklib
 import _transcript
 
+try:  # Deck-only phone rules; absent from the public cloud copy.
+    import phone_rules
+except ImportError:
+    phone_rules = None
+
 
 def is_git_repo(cwd: str) -> bool:
     try:
@@ -104,6 +109,15 @@ def get_transcript_usage(path: Optional[str]) -> Optional[int]:
 
 
 def main(event: Dict[str, Any]) -> None:
+    # The phone note rides along with whatever this hook says, or alone.
+    note = phone_rules.stop_restore(event) if phone_rules else None
+    if not _tick(event, note) and note:
+        _hooklib.system_message(note)
+
+
+def _tick(event: Dict[str, Any], note: Optional[str]) -> bool:
+    """The task/context logic; True when it emitted output (which carries note)."""
+    extra = [note] if note else []
     cwd = event.get("cwd") or os.getcwd()
     key = _hooklib.session_key(event)
     state_file = _hooklib.state_dir() / f"stop_tick_{key}.json"
@@ -188,8 +202,8 @@ def main(event: Dict[str, Any]) -> None:
                 f"Suggest /compact or write a handoff now."
             )
         save_state(state_file, state)
-        _hooklib.block_stop(" ".join(reasons))
-        return
+        _hooklib.block_stop(" ".join(reasons + extra))
+        return True
 
     if delegate:
         msgs = []
@@ -202,8 +216,8 @@ def main(event: Dict[str, Any]) -> None:
             msgs.append(f"CONTEXT ADVISED: {pct}% context remaining (~{tokens // 1000}k used).")
         if msgs:
             save_state(state_file, state)
-            _hooklib.system_message(" ".join(msgs))
-            return
+            _hooklib.system_message(" ".join(msgs + extra))
+            return True
 
     # Non-delegate advisory
     adv_msgs = []
@@ -212,10 +226,11 @@ def main(event: Dict[str, Any]) -> None:
         adv_msgs.append(f"CONTEXT ADVISED: {pct}% context remaining (~{tokens // 1000}k used).")
     if adv_msgs:
         save_state(state_file, state)
-        _hooklib.system_message(" ".join(adv_msgs))
-        return
+        _hooklib.system_message(" ".join(adv_msgs + extra))
+        return True
 
     save_state(state_file, state)
+    return False
 
 
 if __name__ == "__main__":

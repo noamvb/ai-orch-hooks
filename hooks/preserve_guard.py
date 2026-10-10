@@ -8,6 +8,15 @@ import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _hooklib
 
+# Deck-only rule modules (absent from the public cloud copy): each exposes
+# check_bash(command, cwd, event) -> refusal or None and fails open itself.
+_RULE_MODULES = []
+for _name in ("phone_rules", "build_rules", "notes_rules"):
+    try:
+        _RULE_MODULES.append(__import__(_name))
+    except ImportError:
+        pass
+
 import fnmatch
 import json
 import re
@@ -60,6 +69,113 @@ CODE_PATTERNS = [
 ]
 
 PROSE_EXTS = (".md", ".txt", ".rst", ".csv", ".html")
+
+
+_CURRENT_SESSION = "unknown"
+_PENDING_CREATED: List[str] = []
+
+
+def created_ledger() -> Optional[List[str]]:
+    """Read only this session's bounded creation ledger, failing open on errors."""
+    try:
+        path = _hooklib.state_dir() / f"created_{_CURRENT_SESSION}.json"
+        if not path.exists():
+            return []
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, list) or not all(isinstance(p, str) and os.path.isabs(p) for p in data):
+            return None
+        return data[-500:]
+    except Exception:
+        return None
+
+
+def save_created(paths: List[str]) -> None:
+    """Persist at most 500 entries, dropping the oldest."""
+    try:
+        path = _hooklib.state_dir() / f"created_{_CURRENT_SESSION}.json"
+        path.write_text(json.dumps(paths[-500:]), encoding="utf-8")
+    except Exception:
+        return None
+
+
+def record_created(value: str, cwd: str, parents: bool = False,
+                   cwd_known: bool = True) -> None:
+    """Stage a literal nonexistent path before execution; never claim existing work."""
+    try:
+        if not value or not literal_path(value) or (not cwd_known and not os.path.isabs(value)):
+            return None
+        path = os.path.abspath(os.path.join(cwd, os.path.expanduser(value)))
+        if path.startswith("/dev/") or os.path.lexists(path):
+            return None
+        if parents:
+            while not os.path.lexists(os.path.dirname(path)):
+                path = os.path.dirname(path)
+        real = os.path.realpath(path)
+        if real not in _PENDING_CREATED:
+            _PENDING_CREATED.append(real)
+    except Exception:
+        return None
+
+
+def record_bash_created(cmd: str, args: List[str], cwd: str, cwd_known: bool) -> None:
+    """Recognise creation operands and output redirects in an already parsed segment."""
+    try:
+        for i, arg in enumerate(args[:-1]):
+            if arg in (">", ">>"):
+                record_created(args[i + 1], cwd, cwd_known=cwd_known)
+        operands = [a for a in without_redirections(args) if not a.startswith("-")]
+        if cmd in ("mkdir", "touch"):
+            for value in operands:
+                record_created(value, cwd, parents=cmd == "mkdir" and "-p" in args,
+                               cwd_known=cwd_known)
+        elif cmd in ("cp", "mv") and len(operands) >= 2:
+            record_created(operands[-1], cwd, cwd_known=cwd_known)
+        elif cmd == "git" and args and args[0] == "clone":
+            clone_args = args[1:]
+            # Options with values cannot be mistaken for the URL or destination.
+            values: List[str] = []
+            i = 0
+            while i < len(clone_args):
+                arg = clone_args[i]
+                if arg in ("-b", "--branch", "-o", "--origin", "--depth", "--reference",
+                           "--reference-if-able", "--separate-git-dir", "--template", "-c", "--config"):
+                    i += 2
+                    continue
+                if not arg.startswith("-"):
+                    values.append(arg)
+                i += 1
+            if values:
+                dest = values[-1] if len(values) > 1 else values[0].rstrip("/").rsplit("/", 1)[-1]
+                if len(values) == 1 and dest.endswith(".git"):
+                    dest = dest[:-4]
+                if literal_path(values[0]):
+                    record_created(dest, cwd, cwd_known=cwd_known)
+        elif cmd == "python3" and args[:2] == ["-m", "venv"] and len(args) > 2:
+            record_created(args[2], cwd, cwd_known=cwd_known)
+        elif cmd == "uv" and args[:1] == ["venv"] and len(args) > 1:
+            record_created(args[1], cwd, cwd_known=cwd_known)
+        elif cmd == "virtualenv" and operands:
+            record_created(operands[0], cwd, cwd_known=cwd_known)
+    except Exception:
+        return None
+
+
+def consume_created(targets: List[str], cwd: str) -> Optional[bool]:
+    """Authorise only targets within this session's ledger and consume deleted entries."""
+    try:
+        paths = created_ledger()
+        if paths is None:
+            return None
+        if not targets or any(not literal_path(t) for t in targets):
+            return False
+        resolved = [os.path.realpath(os.path.join(cwd, os.path.expanduser(t))) for t in targets]
+        if not all(any(t == p or t.startswith(p + os.sep) for p in paths) for t in resolved):
+            return False
+        save_created([p for p in paths
+                      if not any(p == t or p.startswith(t + os.sep) for t in resolved)])
+        return True
+    except Exception:
+        return None
 
 
 def log_refusal(event: Dict[str, Any], reason: str) -> None:
@@ -624,6 +740,7 @@ def evaluate_apply_patch(event: Dict[str, Any]) -> Optional[str]:
             p = line[len("*** Add File:"):].strip()
             if p:
                 add_update_move_paths.append(p)
+                record_created(p, cwd)
         elif line.startswith("*** Update File:"):
             p = line[len("*** Update File:"):].strip()
             if p:
@@ -662,6 +779,14 @@ def evaluate_bash(event: Dict[str, Any]) -> Optional[str]:
         return None
 
     cwd = event.get("cwd") or os.getcwd()
+
+    for module in _RULE_MODULES:
+        try:
+            reason = module.check_bash(cmd, cwd, event)
+        except Exception:
+            reason = None
+        if reason:
+            return reason
 
     # Rule 10: Parse failures use a conservative raw-string scan.
     try:
@@ -776,6 +901,7 @@ def evaluate_bash(event: Dict[str, Any]) -> Optional[str]:
             continue
         cmd_name = seg[idx]
         seg_args = seg[idx + 1:]
+        record_bash_created(cmd_name, seg_args, cwd, cwd_known)
 
         # Handle git commands
         if cmd_name == "git":
@@ -1039,6 +1165,10 @@ def handle_delete_verb(verb: str, targets: List[str], cwd: str) -> Optional[str]
         if nv:
             return f"PRESERVE: target '{t}' is on the never-delete list ({nv})."
 
+    # Only a readable ledger that covers every target allows; an error refuses.
+    if consume_created(targets, cwd) is True:
+        return None
+
     # Rule 5: Worktree relaxation. Judged by where the targets are, not by
     # the session's cwd, so an orchestrator in the source repo can clean up
     # delegate worktrees it owns.
@@ -1070,6 +1200,9 @@ def handle_delete_verb(verb: str, targets: List[str], cwd: str) -> Optional[str]
 
 
 def main(event: Dict[str, Any]) -> None:
+    global _CURRENT_SESSION, _PENDING_CREATED
+    _CURRENT_SESSION = _hooklib.session_key(event)
+    _PENDING_CREATED = []
     tool = event.get("tool_name")
     if tool not in ("Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "apply_patch"):
         return
@@ -1081,10 +1214,17 @@ def main(event: Dict[str, Any]) -> None:
         reason = evaluate_apply_patch(event)
     else:
         reason = evaluate_write_edit(event)
+        if tool == "Write":
+            record_created((event.get("tool_input") or {}).get("file_path") or "",
+                           event.get("cwd") or os.getcwd())
 
     if reason:
         log_refusal(event, reason)
         _hooklib.deny(reason)
+    elif _PENDING_CREATED:
+        paths = created_ledger()
+        if paths is not None:
+            save_created([p for p in paths if p not in _PENDING_CREATED] + _PENDING_CREATED)
 
 
 if __name__ == "__main__":
