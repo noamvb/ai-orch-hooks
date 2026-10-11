@@ -26,6 +26,12 @@ except ImportError:
     phone_rules = None
 
 
+try:
+    import task_rules
+except ImportError:
+    task_rules = None
+
+
 def is_git_repo(cwd: str) -> bool:
     try:
         r = subprocess.run(
@@ -111,11 +117,12 @@ def get_transcript_usage(path: Optional[str]) -> Optional[int]:
 def main(event: Dict[str, Any]) -> None:
     # The phone note rides along with whatever this hook says, or alone.
     note = phone_rules.stop_restore(event) if phone_rules else None
-    if not _tick(event, note) and note:
+    task_reason = task_rules.stop_check(event) if task_rules else None
+    if not _tick(event, note, task_block=task_reason) and note:
         _hooklib.system_message(note)
 
 
-def _tick(event: Dict[str, Any], note: Optional[str]) -> bool:
+def _tick(event: Dict[str, Any], note: Optional[str], task_block: Optional[str] = None) -> bool:
     """The task/context logic; True when it emitted output (which carries note)."""
     extra = [note] if note else []
     cwd = event.get("cwd") or os.getcwd()
@@ -172,7 +179,7 @@ def _tick(event: Dict[str, Any], note: Optional[str]) -> bool:
 
     ctx_refusal_due = ctx_dire and not state.get("ctx_blocked", False)
 
-    if not delegate and not stop_hook_active and (task_checkpoint_due or ctx_refusal_due):
+    if not delegate and not stop_hook_active and (task_checkpoint_due or ctx_refusal_due or task_block):
         reasons = []
         if task_checkpoint_due:
             try:
@@ -201,6 +208,8 @@ def _tick(event: Dict[str, Any], note: Optional[str]) -> bool:
                 f"CONTEXT: {pct}% context remaining (~{tokens // 1000}k / {window // 1000}k tokens used). "
                 f"Suggest /compact or write a handoff now."
             )
+        if task_block:
+            reasons.append(task_block)
         save_state(state_file, state)
         _hooklib.block_stop(" ".join(reasons + extra))
         return True
