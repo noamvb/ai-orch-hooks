@@ -301,7 +301,7 @@ def settings_guarded() -> bool:
 
 
 def classify_settings_path(path_str: str, cwd: Optional[str] = None) -> Optional[str]:
-    """Return 'claude' for Claude settings, 'codex' for Codex config, else None."""
+    """Return 'claude', 'codex', or 'instructions' for protected paths, else None."""
     clean_p = path_str.strip().strip("'\"`")
     if not clean_p:
         return None
@@ -334,11 +334,30 @@ def classify_settings_path(path_str: str, cwd: Optional[str] = None) -> Optional
         return "claude"
     if abs_p == c_abs or real_p == c_real:
         return "codex"
+
+    instruction_paths = [
+        os.path.join(home_abs, relative)
+        for relative in (
+            ".claude/CLAUDE.md", ".codex/AGENTS.md", ".ai-orch/CLAUDE.md",
+            ".ai-orch/AGENTS.md", ".ai-orch/docs/owner.md",
+        )
+    ]
+    if abs_p in instruction_paths or real_p in map(os.path.realpath, instruction_paths):
+        return "instructions"
+
+    projects_abs = os.path.join(home_abs, ".claude", "projects")
+    projects_real = os.path.realpath(projects_abs)
+    for candidate, projects in ((abs_p, projects_abs), (real_p, projects_real)):
+        prefix = projects + os.sep
+        if candidate.startswith(prefix):
+            parts = candidate[len(prefix):].split(os.sep)
+            if len(parts) >= 3 and parts[1] == "memory":
+                return "instructions"
     return None
 
 
 def is_settings_path(path_str: str, cwd: Optional[str] = None) -> bool:
-    """True if path resolves to a protected settings file."""
+    """True for protected 'claude', 'codex', or 'instructions' paths."""
     return classify_settings_path(path_str, cwd) is not None
 
 
@@ -718,6 +737,8 @@ def evaluate_write_edit(event: Dict[str, Any]) -> Optional[str]:
         return "PRESERVE: modifications to ~/.claude/settings.json are prohibited."
     elif kind == "codex":
         return "PRESERVE: modifications to ~/.codex/config.toml are prohibited."
+    elif kind == "instructions":
+        return "PRESERVE: delegates may not modify the owner's instruction or memory files."
     return None
 
 
@@ -761,6 +782,8 @@ def evaluate_apply_patch(event: Dict[str, Any]) -> Optional[str]:
             return "PRESERVE: modifications to ~/.claude settings files are prohibited."
         elif kind == "codex":
             return "PRESERVE: modifications to ~/.codex/config.toml are prohibited."
+        elif kind == "instructions":
+            return "PRESERVE: delegates may not modify the owner's instruction or memory files."
 
     # Rule 1: apply_patch with *** Delete File: P runs P through handle_delete_verb
     if delete_paths:
@@ -815,6 +838,8 @@ def evaluate_bash(event: Dict[str, Any]) -> Optional[str]:
                 return "PRESERVE: writing to ~/.claude settings files from shell is prohibited."
             elif kind == "codex":
                 return "PRESERVE: writing to ~/.codex/config.toml from shell is prohibited."
+            elif kind == "instructions":
+                return "PRESERVE: delegates may not modify the owner's instruction or memory files."
 
     if guard_settings and SETTINGS_WRITE_RE.search(clean_cmd):
         return "PRESERVE: writing to ~/.claude settings files from shell is prohibited."
@@ -869,6 +894,8 @@ def evaluate_bash(event: Dict[str, Any]) -> Optional[str]:
                         return "PRESERVE: writing to ~/.claude settings files from shell is prohibited."
                     elif kind == "codex":
                         return "PRESERVE: writing to ~/.codex/config.toml from shell is prohibited."
+                    elif kind == "instructions":
+                        return "PRESERVE: delegates may not modify the owner's instruction or memory files."
         elif first_tok in ("cp", "copy", "mv", "move"):
             dest_candidates = [a for a in seg[1:] if not a.startswith("-")]
             if dest_candidates:
@@ -877,6 +904,8 @@ def evaluate_bash(event: Dict[str, Any]) -> Optional[str]:
                     return "PRESERVE: writing to ~/.claude settings files from shell is prohibited."
                 elif kind == "codex":
                     return "PRESERVE: writing to ~/.codex/config.toml from shell is prohibited."
+                elif kind == "instructions":
+                    return "PRESERVE: delegates may not modify the owner's instruction or memory files."
         elif first_tok == "sed" and any(a.startswith("-i") for a in seg):
             for a in seg[1:]:
                 if not a.startswith("-"):
@@ -885,6 +914,8 @@ def evaluate_bash(event: Dict[str, Any]) -> Optional[str]:
                         return "PRESERVE: writing to ~/.claude settings files from shell is prohibited."
                     elif kind == "codex":
                         return "PRESERVE: writing to ~/.codex/config.toml from shell is prohibited."
+                    elif kind == "instructions":
+                        return "PRESERVE: delegates may not modify the owner's instruction or memory files."
 
         # Find command name (skip leading env assignments like VAR=1)
         idx = 0
