@@ -15,7 +15,7 @@ deck-bridge hand-off) are linked into ~/.claude/skills, and owner-rules.md is
 copied into ~/.claude/CLAUDE.md between marker comments. Last,
 install-android.py adds the Android SDK and Flutter (skipped and reported on
 any failure), and ANDROID_HOME goes into the settings' env block when the SDK
-is there.
+is there. The settings also allow add_repo without a prompt (see ALLOW).
 """
 import json
 import os
@@ -31,6 +31,10 @@ RULES = os.path.join(HOME, ".claude", "CLAUDE.md")
 BEGIN, END = "<!-- ai-orch-cloud-rules:begin -->", "<!-- ai-orch-cloud-rules:end -->"
 MARK = ".ai-orch/hooks/"
 ANDROID_ROOT = os.environ.get("AIORCH_ANDROID_ROOT", "/opt/android-sdk")
+# The owner pre-approved attaching repos (15 Oct 2026): owner-rules.md has
+# sessions attach the codebook with push access, which auto mode otherwise
+# refuses as a permission grant. A tool rule cannot be narrowed to one repo.
+ALLOW = ["mcp__claude-code-remote__add_repo"]
 
 
 def h(name, timeout):
@@ -111,6 +115,8 @@ def merge_settings():
             if group["hooks"]:
                 kept.append(group)
         hooks[event] = kept + groups
+    allow = data.setdefault("permissions", {}).setdefault("allow", [])
+    allow.extend(rule for rule in ALLOW if rule not in allow)
     if os.path.isdir(os.path.join(ANDROID_ROOT, "platform-tools")):
         data.setdefault("env", {}).update(ANDROID_HOME=ANDROID_ROOT, ANDROID_SDK_ROOT=ANDROID_ROOT)
     os.makedirs(os.path.dirname(SETTINGS), exist_ok=True)

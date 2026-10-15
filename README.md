@@ -18,7 +18,9 @@ The owner's working rules, `owner-rules.md`, are copied into
 `install-android.py` then installs the Android SDK (platforms 36 and 36.1,
 build-tools 36, platform-tools) under `/opt/android-sdk` and Flutter under
 `/opt/flutter`, and sets `ANDROID_HOME`; the NDK and CMake download on a
-project's first build. It fails open and keeps the setup script under the
+project's first build. It also writes a Gradle init script that sends Maven
+Central downloads to Google's mirror, because Maven Central throttles the
+cloud's shared IPs (HTTP 429). It fails open and keeps the setup script under the
 environment cache's five-minute limit; `AIORCH_CLOUD_ANDROID=0` skips it.
 
 And one skill, linked into `~/.claude/skills`:
