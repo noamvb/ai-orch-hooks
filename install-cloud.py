@@ -9,8 +9,9 @@ keeps everything else.
 
 Only the hooks that make sense on a throwaway VM are wired: the delete and
 force-push guard, the spawn limiter, the elapsed-time line and the context
-advisory. A SessionStart entry pulls this repo, so hook updates arrive even
-when the environment's setup snapshot is days old. Skills under skills/ (the
+advisory. A SessionStart entry pulls this repo and re-runs this script with
+--quick, so hook, rule and settings updates arrive even when the environment's
+setup snapshot is days old. Skills under skills/ (the
 deck-bridge hand-off) are linked into ~/.claude/skills, and owner-rules.md is
 copied into ~/.claude/CLAUDE.md between marker comments. Last,
 install-android.py adds the Android SDK and Flutter (skipped and reported on
@@ -49,7 +50,8 @@ OURS = {
     "PostToolUse": [{"hooks": [h("time_budget", 5)]}],
     "Stop": [{"hooks": [h("stop_tick", 20)]}],
     "SessionStart": [{"hooks": [{"type": "command", "timeout": 20, "command":
-        f'git -C "{HERE}" pull -q --ff-only >/dev/null 2>&1 || true  # {MARK}update'}]}],
+        f'git -C "{HERE}" pull -q --ff-only >/dev/null 2>&1; '
+        f'python3 "{HERE}/install-cloud.py" --quick >/dev/null 2>&1 || true  # {MARK}update'}]}],
 }
 
 
@@ -125,17 +127,22 @@ def merge_settings():
         fh.write("\n")
 
 
-def main():
+def main(argv):
+    # --quick is the SessionStart re-run: the environment's setup snapshot can
+    # be up to about seven days old, so each session re-applies the rules,
+    # settings and Gradle mirror from the freshly pulled repo, but skips the
+    # SDK and Flutter downloads that only the setup script has time for.
+    quick = "--quick" in argv
     link_home()
     link_skills()
     install_rules()
     android = os.path.join(HERE, "install-android.py")
     if os.path.isfile(android):
-        subprocess.run([sys.executable, android], check=False)
+        subprocess.run([sys.executable, android] + (["--mirror-only"] if quick else []), check=False)
     merge_settings()
     print(f"install-cloud: hooks wired in {SETTINGS} from {HERE}")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

@@ -146,6 +146,9 @@ def main():
     if os.environ.get("AIORCH_CLOUD_ANDROID") == "0" or not sys.platform.startswith("linux"):
         return 0
     failures = []
+    if "--mirror-only" in sys.argv[1:]:  # install-cloud.py --quick, at session start
+        guarded("maven-mirror", install_maven_mirror, failures)
+        return 0
     threads = [threading.Thread(target=guarded, args=(n, f, failures))
                for n, f in (("android-sdk", install_sdk), ("flutter", install_flutter))]
     for t in threads:
