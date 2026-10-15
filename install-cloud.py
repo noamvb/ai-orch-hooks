@@ -12,10 +12,14 @@ force-push guard, the spawn limiter, the elapsed-time line and the context
 advisory. A SessionStart entry pulls this repo, so hook updates arrive even
 when the environment's setup snapshot is days old. Skills under skills/ (the
 deck-bridge hand-off) are linked into ~/.claude/skills, and owner-rules.md is
-copied into ~/.claude/CLAUDE.md between marker comments.
+copied into ~/.claude/CLAUDE.md between marker comments. Last,
+install-android.py adds the Android SDK and Flutter (skipped and reported on
+any failure), and ANDROID_HOME goes into the settings' env block when the SDK
+is there.
 """
 import json
 import os
+import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -26,6 +30,7 @@ SKILLS = os.path.join(HOME, ".claude", "skills")
 RULES = os.path.join(HOME, ".claude", "CLAUDE.md")
 BEGIN, END = "<!-- ai-orch-cloud-rules:begin -->", "<!-- ai-orch-cloud-rules:end -->"
 MARK = ".ai-orch/hooks/"
+ANDROID_ROOT = os.environ.get("AIORCH_ANDROID_ROOT", "/opt/android-sdk")
 
 
 def h(name, timeout):
@@ -106,6 +111,8 @@ def merge_settings():
             if group["hooks"]:
                 kept.append(group)
         hooks[event] = kept + groups
+    if os.path.isdir(os.path.join(ANDROID_ROOT, "platform-tools")):
+        data.setdefault("env", {}).update(ANDROID_HOME=ANDROID_ROOT, ANDROID_SDK_ROOT=ANDROID_ROOT)
     os.makedirs(os.path.dirname(SETTINGS), exist_ok=True)
     with open(SETTINGS, "w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=2)
@@ -116,6 +123,9 @@ def main():
     link_home()
     link_skills()
     install_rules()
+    android = os.path.join(HERE, "install-android.py")
+    if os.path.isfile(android):
+        subprocess.run([sys.executable, android], check=False)
     merge_settings()
     print(f"install-cloud: hooks wired in {SETTINGS} from {HERE}")
     return 0

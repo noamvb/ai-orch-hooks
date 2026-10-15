@@ -15,6 +15,12 @@ What they do on a cloud VM:
 The owner's working rules, `owner-rules.md`, are copied into
 `~/.claude/CLAUDE.md` between marker comments (other content is kept).
 
+`install-android.py` then installs the Android SDK (platforms 36 and 36.1,
+build-tools 36, platform-tools) under `/opt/android-sdk` and Flutter under
+`/opt/flutter`, and sets `ANDROID_HOME`; the NDK and CMake download on a
+project's first build. It fails open and keeps the setup script under the
+environment cache's five-minute limit; `AIORCH_CLOUD_ANDROID=0` skips it.
+
 And one skill, linked into `~/.claude/skills`:
 
 - `deck-bridge`: hand a bounded implementation task to the owner's home
