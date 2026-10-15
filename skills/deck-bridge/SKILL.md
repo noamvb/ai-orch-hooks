@@ -28,6 +28,7 @@ One JSON object, schema `deck-bridge/v1`. Unknown keys are refused.
 | `v` | `1` |
 | `task_id` | `^[a-z0-9][a-z0-9-]{2,62}$`, unique per task, e.g. `fix-login-20261010a` |
 | `repo` | GitHub `owner/name` of this repository |
+| `profile` | optional; home-machine profile id, needed only when the bridge refuses with `repo matches several profiles (...)`; copy one id from that refusal, e.g. `election-night-multi` |
 | `base_sha` | the 40-character commit id from step 1 |
 | `engine` | `"agy"` (mechanical, breadth) or `"codex"` (depth on a few files) |
 | `model` | optional; codex: `gpt-6.1-sol`. agy: omit, or an `agy models` name |

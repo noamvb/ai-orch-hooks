@@ -11,7 +11,8 @@ Only the hooks that make sense on a throwaway VM are wired: the delete and
 force-push guard, the spawn limiter, the elapsed-time line and the context
 advisory. A SessionStart entry pulls this repo, so hook updates arrive even
 when the environment's setup snapshot is days old. Skills under skills/ (the
-deck-bridge hand-off) are linked into ~/.claude/skills.
+deck-bridge hand-off) are linked into ~/.claude/skills, and owner-rules.md is
+copied into ~/.claude/CLAUDE.md between marker comments.
 """
 import json
 import os
@@ -22,6 +23,8 @@ HOME = os.path.expanduser("~")
 LINK = os.path.join(HOME, ".ai-orch")
 SETTINGS = os.path.join(HOME, ".claude", "settings.json")
 SKILLS = os.path.join(HOME, ".claude", "skills")
+RULES = os.path.join(HOME, ".claude", "CLAUDE.md")
+BEGIN, END = "<!-- ai-orch-cloud-rules:begin -->", "<!-- ai-orch-cloud-rules:end -->"
 MARK = ".ai-orch/hooks/"
 
 
@@ -66,6 +69,28 @@ def link_skills():
         os.symlink(src, dst)
 
 
+def install_rules():
+    """Copy owner-rules.md into ~/.claude/CLAUDE.md between markers, keeping any other content."""
+    src = os.path.join(HERE, "owner-rules.md")
+    if not os.path.isfile(src):
+        return
+    with open(src, encoding="utf-8") as fh:
+        block = f"{BEGIN}\n{fh.read().strip()}\n{END}\n"
+    try:
+        with open(RULES, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        text = ""
+    start, stop = text.find(BEGIN), text.find(END)
+    if start != -1 and stop > start:
+        text = text[:start] + block + text[stop + len(END):].lstrip("\n")
+    else:
+        text = (text.rstrip("\n") + "\n\n" if text.strip() else "") + block
+    os.makedirs(os.path.dirname(RULES), exist_ok=True)
+    with open(RULES, "w", encoding="utf-8") as fh:
+        fh.write(text)
+
+
 def merge_settings():
     try:
         with open(SETTINGS, encoding="utf-8") as fh:
@@ -90,6 +115,7 @@ def merge_settings():
 def main():
     link_home()
     link_skills()
+    install_rules()
     merge_settings()
     print(f"install-cloud: hooks wired in {SETTINGS} from {HERE}")
     return 0

@@ -12,6 +12,9 @@ What they do on a cloud VM:
 - `time_budget`: prints elapsed time after each tool call.
 - `stop_tick`: context-remaining advisory.
 
+The owner's working rules, `owner-rules.md`, are copied into
+`~/.claude/CLAUDE.md` between marker comments (other content is kept).
+
 And one skill, linked into `~/.claude/skills`:
 
 - `deck-bridge`: hand a bounded implementation task to the owner's home
