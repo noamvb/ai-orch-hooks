@@ -1,6 +1,6 @@
 ---
 name: deck-bridge
-description: Hand a bounded implementation task from a Claude Code cloud session to the owner's home machine, where a codex or agy delegate does it under the owner's own logins and verification, and get the result back as a git branch. Use when the user asks to "send this to the Deck", "use codex/agy from here", or to delegate work to a cheaper engine from a cloud session. Not for live actions (deploys, releases, pushes to main).
+description: Hand a bounded implementation or analysis task from a Claude Code cloud session to the owner's home machine, where a codex or agy delegate does it under the owner's own logins and verification, and get the result back as a git branch. Use when the user asks to "send this to the Deck", "use codex/agy from here", or to delegate work to a cheaper engine from a cloud session. Not for live actions (deploys, releases, pushes to main).
 ---
 
 # Deck bridge (cloud side)
@@ -33,8 +33,8 @@ One JSON object, schema `deck-bridge/v1`. Unknown keys are refused.
 | `engine` | `"agy"` (mechanical, breadth) or `"codex"` (depth on a few files) |
 | `model` | optional; codex: `gpt-6.1-sol`. agy: omit, or an `agy models` name |
 | `effort` | optional; codex `low|medium|high|xhigh`; agy: only when `model` is omitted |
-| `category` | optional: `implementation` (default), `documentation`, `testing` |
-| `allowed_paths` | 1-50 repo-relative paths or prefixes the delegate may change (`src/`, `tests/x.py`) |
+| `category` | optional: `implementation` (default), `documentation`, `testing`, `research`, `review`, `design`, `diagnosis`; research/review/design/diagnosis run read-only and return a report |
+| `allowed_paths` | 1-50 repo-relative paths or prefixes the delegate may change (`src/`, `tests/x.py`); omit (or []) for those analysis categories |
 | `timeout_s` | optional, 60-3600, default 1800 |
 | `spec` | the full task text, up to 60000 characters |
 
@@ -63,21 +63,26 @@ No branch after the deadline means the home machine refused before it could
 push (repo not onboarded there, agents paused, or the machine is off). Tell
 the user; do not re-fire with the same `task_id`.
 
-## 5. Read the status and take the patch
+## 5. Read the status and result
 
     git fetch origin "bridge/$TASK_ID"
     git log -1 --format=%B FETCH_HEAD
 
 The tip commit's message is `bridge-status: <task_id>`, a blank line, then a
 JSON status: `status` (`passed|failed|refused`), `reason`, `run_id`,
-`delegate_exit`, `patch_commit`, `changed_paths`, `final_message` (the
+`delegate_exit`, `category`, `patch_commit`, `changed_paths`, `report_commit`,
+`report_paths`, `final_message` (the
 delegate's own report, which is a claim, not evidence).
 
-- `passed`: `git cherry-pick <patch_commit>`, then read the diff yourself and
+- `passed` for implementation/documentation/testing: `git cherry-pick <patch_commit>`, then read the diff yourself and
   run the tests. The repo's registered checks passed on the home machine;
   your own review is still the gate.
 - `failed` / `refused`: read `reason` and `final_message`, fix the spec, and
   fire again with a NEW `task_id`. Retry at most once; after a second failure
   do the work yourself or ask the user.
 
-The status commit is empty; never merge the `bridge/*` branch itself.
+For a passed analysis task, read `bridge-report/<task_id>.md` (and `.json`) on branch `bridge/<task_id>`:
+`git fetch origin bridge/<task_id> && git show FETCH_HEAD^:bridge-report/<task_id>.md`.
+The report is evidence for the cloud session to judge, not a decision.
+The status commit is empty; the session must not merge the bridge branch.
+The report files are not meant for main.

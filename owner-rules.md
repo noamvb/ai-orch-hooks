@@ -37,25 +37,49 @@ the codex/agy CLIs. When a task needs one of those, say so plainly; do not
 work around it.
 
 - **Delegating to codex or agy**: use the `deck-bridge` skill. It hands one
-  bounded implementation task to the Deck and returns a `bridge/<task_id>`
-  branch. It does implementation, documentation and testing tasks only; it
-  refuses when the Deck is off, busy with a game, or the repo is not set up
-  there. Research and reviews are not bridged: do them yourself.
+  bounded task to the Deck and returns a `bridge/<task_id>` branch:
+  implementation, documentation and testing tasks come back as a patch;
+  research, review, design and diagnosis tasks run read-only there (billed to
+  the owner's ChatGPT or Google plan, not the Claude plan) and come back as a
+  report. Prefer the bridge for research and reviews. It refuses when the Deck
+  is off, busy with a game, or the repo is not set up there; then do the work
+  yourself.
 - **Sub-agents** (Agent tool) bill the owner's Claude plan, so spawn them only
   when the owner asks. Never pass `opus` or `sonnet` as a sub-agent model (the
   `sonnet` alias resolves to a model the owner has denied); use `haiku` for
   mechanical work.
 - **Project knowledge** lives in the owner's private `codebook` repo. Before
-  working on an app, attach it read-only (`add_repo`, owner `noamvb`, repo
-  `codebook`) and read `projects/<slug>.md` and `memory/<slug>.md`. The app's
-  repo wins on any conflict. If you learn something durable about a project,
-  put it in your final reply under "Worth remembering" so it reaches the
-  codebook.
+  working on an app, attach it with push access (`add_repo`, owner `noamvb`,
+  repo `codebook`, access `push`) and read `AGENTS.md`, `projects/<slug>.md`
+  and `memory/<slug>.md`. The app's repo wins on any conflict.
+- **Keep the codebook current** (pre-authorized, no need to ask): after you
+  merge work that changes what a page says, or learn something durable,
+  update `projects/<slug>.md` the way `AGENTS.md` describes. First link the
+  app checkout so the page tools can see it:
+  `mkdir -p sources && ln -sfn <app checkout> sources/<repo>` (`<repo>` is the
+  page's `repo:` field). Then edit the page, run
+  `bin/check-page projects/<slug>.md` and `bin/stale --refresh <slug>`,
+  commit, and `git pull --no-rebase --no-edit origin main && git push origin
+  main`. Never
+  edit `memory/` (it is generated on the Deck) or commit `sources/`.
 
 ## Safety
 
-- Never push to `main`/`master`, tag, publish a release or deploy without the
-  owner's explicit yes in this session. Work on a branch and open a draft PR.
+- **Merge your own work when the tests pass** (pre-authorized): work on the
+  session's branch (`main` below means the default branch; some repos use
+  `master`). When done, `git fetch origin main && git merge
+  --no-edit origin/main` (the guard refuses rebase), then run the project's
+  own tests and checks (its `CLAUDE.md`/`AGENTS.md` names them; otherwise the
+  test suite) and push the branch. If the repo has CI (`.github/workflows/`),
+  wait until every check run on that commit has finished green
+  (`gh api repos/<owner>/<repo>/commits/<sha>/check-runs`). Then land it with
+  a fast-forward push: `git push origin HEAD:main` (GitHub marks the session's
+  PR merged). If the push is rejected, fetch, merge, re-test and try once
+  more. If anything is red, or no test covers the change, do not land it:
+  leave the PR open and say why. (`gh pr` is blocked here, and draft PRs
+  cannot be merged through the REST API, hence the push.)
+- Never tag, publish a release, deploy, or force-push `main`/`master` without
+  the owner's explicit yes in this session.
 - `bridge/*` branches are written only by the Deck; never push to them.
 - Never put credentials, tokens or API keys into a repo, a PR, a commit
   message or a bridge spec.

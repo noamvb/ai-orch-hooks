@@ -23,9 +23,9 @@ environment cache's five-minute limit; `AIORCH_CLOUD_ANDROID=0` skips it.
 
 And one skill, linked into `~/.claude/skills`:
 
-- `deck-bridge`: hand a bounded implementation task to the owner's home
-  machine (codex or agy under its own logins and checks) and fetch the result
-  as a `bridge/<task_id>` branch. See `skills/deck-bridge/SKILL.md`.
+- `deck-bridge`: hand a bounded implementation, research or review task to
+  the owner's home machine (codex or agy under its own logins and checks) and
+  fetch the patch or report as a `bridge/<task_id>` branch. See `skills/deck-bridge/SKILL.md`.
 
 ## Use
 
