@@ -43,11 +43,19 @@ contract: files to change, exact behaviour, numbered tests, acceptance
 commands, what is out of scope, and "if this would break an existing test,
 stop and start your final message with `BLOCKED:`". Never put secrets in it.
 
-## 3. Fire the Routine
+## 3. Open the request issue
 
-Find the Routine named `deck-bridge` with `list_triggers` and call
-`fire_trigger` on it with `text` set to the envelope as ONE line of compact
-JSON (`json.dumps(obj, separators=(",", ":"))`). Nothing else goes in `text`.
+Open an issue on the task's own repository with the GitHub MCP tool
+`issue_write` (method `create`):
+
+- title: exactly `deck-bridge: <task_id>`
+- body: the envelope as JSON inside one ```json fence, nothing else needed
+
+The Deck checks the owner's onboarded repositories every minute. Within about
+a minute it comments `bridge: accepted task=...` (or `bridge: refused ...`
+with the reason) and closes the issue. Only issues the owner's account opened
+count. Do not reopen or edit a picked-up issue; a retry is a new issue with a
+new `task_id`.
 
 ## 4. Wait for the branch
 
@@ -59,9 +67,11 @@ take 5-40 minutes):
       sleep 30
     done
 
-No branch after the deadline means the home machine refused before it could
-push (repo not onboarded there, agents paused, or the machine is off). Tell
-the user; do not re-fire with the same `task_id`.
+No branch after the deadline: read the issue's comment first. A `refused`
+comment gives the reason (repo not onboarded there, agents paused, bad
+envelope); an issue still open with no comment means the Deck is off or not
+polling. Tell
+the user; do not retry with the same `task_id`.
 
 ## 5. Read the status and result
 
@@ -78,7 +88,7 @@ delegate's own report, which is a claim, not evidence).
   run the tests. The repo's registered checks passed on the home machine;
   your own review is still the gate.
 - `failed` / `refused`: read `reason` and `final_message`, fix the spec, and
-  fire again with a NEW `task_id`. Retry at most once; after a second failure
+  open a new issue with a NEW `task_id`. Retry at most once; after a second failure
   do the work yourself or ask the user.
 
 For a passed analysis task, read `bridge-report/<task_id>.md` (and `.json`) on branch `bridge/<task_id>`:
@@ -86,3 +96,21 @@ For a passed analysis task, read `bridge-report/<task_id>.md` (and `.json`) on b
 The report is evidence for the cloud session to judge, not a decision.
 The status commit is empty; the session must not merge the bridge branch.
 The report files are not meant for main.
+
+## Phone adb jobs
+
+To look at or update the owner's phone, open an issue titled
+`deck-adb: <job_id>` on a private repo the Deck knows (poop-schedule or
+local-llm), body a json fence:
+
+    {"v":1,"job_id":"<job_id>","op":"devices"}
+    {"v":1,"job_id":"<job_id>","op":"logcat","package":"com.noamv.poopschedule","lines":300,"level":"W"}
+    {"v":1,"job_id":"<job_id>","op":"dumpsys","package":"com.noamv.localllm","service":"meminfo"}
+    {"v":1,"job_id":"<job_id>","op":"install","package":"com.noamv.poopschedule","tag":"v1.7.3"}
+
+`package` is `com.noamv.poopschedule` or `com.noamv.localllm` only. `install`
+fetches the APK from that app's public releases repo and checks its SHA-256
+first; `tag` is optional (default: latest release). Nothing else can run.
+Within about a minute the Deck comments the output (or `adb: refused ...` with
+the reason) and closes the issue. Read the comment; do not reopen the issue,
+open a new one with a new `job_id`.

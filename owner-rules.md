@@ -71,13 +71,17 @@ work around it.
   --no-edit origin/main` (the guard refuses rebase), then run the project's
   own tests and checks (its `CLAUDE.md`/`AGENTS.md` names them; otherwise the
   test suite) and push the branch. If the repo has CI (`.github/workflows/`),
-  wait until every check run on that commit has finished green
-  (`gh api repos/<owner>/<repo>/commits/<sha>/check-runs`). Then land it with
-  a fast-forward push: `git push origin HEAD:main` (GitHub marks the session's
-  PR merged). If the push is rejected, fetch, merge, re-test and try once
-  more. If anything is red, or no test covers the change, do not land it:
-  leave the PR open and say why. (`gh pr` is blocked here, and draft PRs
-  cannot be merged through the REST API, hence the push.)
+  wait until every check run on that commit has finished green (GitHub MCP
+  `pull_request_read`, method `get_check_runs`). Then land it through the
+  session's PR: mark it ready (`update_pull_request`, `draft: false`) and
+  merge it with `merge_pull_request`, passing `expectedHeadSha` and the merge
+  method main's history shows (squash where main has one commit per PR). This
+  also works where a ruleset requires a pull request and refuses direct pushes
+  to main. If GitHub reports conflicts or an out-of-date branch, fetch, merge,
+  re-test, push and try once more. Only when the GitHub MCP tools are missing,
+  land it with a fast-forward push instead: `git push origin HEAD:main`. If
+  anything is red, or no test covers the change, do not land it: leave the PR
+  open and say why. (`gh pr` is blocked here.)
 - Never tag, publish a release, deploy, or force-push `main`/`master` without
   the owner's explicit yes in this session.
 - `bridge/*` branches are written only by the Deck; never push to them.
