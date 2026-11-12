@@ -1,4 +1,4 @@
-"""Claude time budget context for each tool call.
+"""Claude time budget context: one line a minute, only while a budget is set.
 
 Wired for both engines (tests/tools/test_codex_plugin.py keeps the hook sets
 identical), but the elapsed/budget signal is an Opus 5.5 behaviour
@@ -16,6 +16,9 @@ from typing import Any, Dict, Optional, Tuple
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _hooklib
 import _transcript
+
+
+EMIT_EVERY_S = 60
 
 
 def _integer(value: Any, positive: bool = False) -> Optional[int]:
@@ -78,12 +81,22 @@ def main(event: Dict[str, Any]) -> None:
             candidate = turn.get("turn_started")
             if isinstance(candidate, int) and not isinstance(candidate, bool):
                 start = candidate
-    if start is None:
+    # No budget, no line: a bare "elapsed Ns" after every tool call cost context
+    # and told the model nothing it could pace against (owner, 11 Nov 2026).
+    if start is None or budget is None:
         return
-    elapsed = max(0, _now() - start)
-    line = "elapsed %ss" % elapsed
-    if budget is not None:
-        line += " / %ss (pace the work; verification steps are not optional)" % budget
+    now = _now()
+    emit_path = _hooklib.state_dir() / ("time_budget_emit_%s.json" % _hooklib.session_key(event))
+    last = _state(emit_path).get("emitted_at")
+    if isinstance(last, int) and not isinstance(last, bool) and 0 <= now - last < EMIT_EVERY_S:
+        return
+    try:
+        emit_path.parent.mkdir(parents=True, exist_ok=True)
+        emit_path.write_text(json.dumps({"emitted_at": now}), encoding="utf-8")
+    except Exception:
+        pass
+    elapsed = max(0, now - start)
+    line = "elapsed %ss / %ss (pace the work; verification steps are not optional)" % (elapsed, budget)
     _hooklib.emit({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": line}})
 
 
